@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>TradingBot Operations</title>
+    <link rel="stylesheet" href="/dashboard.css" />
+    <script src="/dashboard.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <p class="eyebrow">TradingBot · MT5 operations</p>
+            <h1>Forward observer</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="local-chip"><i></i>Localhost only</span>
+          <button class="refresh-button" id="refreshButton" type="button" aria-label="Refresh dashboard data">
+            <span aria-hidden="true">↻</span> Refresh
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-grid" aria-labelledby="overviewHeading">
+          <div class="hero-copy">
+            <div class="status-line">
+              <span class="status-pill status-ok" id="overallStatus"><i></i>Healthy</span>
+              <span class="muted" id="lastUpdated">Waiting for first refresh</span>
+            </div>
+            <h2 id="overviewHeading">The experiment is running.<br /><em>The result stays sealed.</em></h2>
+            <p>
+              Operational evidence only for
+              <strong>xauusd-regime-session-open-h1-forward-v2</strong>.
+              This interface cannot submit broker orders or retrieve performance.
+            </p>
+          </div>
+          <aside class="blind-card" aria-label="Performance lock">
+            <div class="lock-icon" aria-hidden="true">⌁</div>
+            <div>
+              <span class="card-kicker">Research guardrail</span>
+              <h3>Performance blinded</h3>
+              <p>Returns remain inaccessible until the predeclared endpoint and trade-count gates are satisfied.</p>
+            </div>
+            <span class="blind-badge">LOCKED</span>
+          </aside>
+        </section>
+
+        <section class="metric-grid" aria-label="Primary operational health">
+          <article class="metric-card">
+            <div class="metric-heading"><span>Clock coverage</span><span class="micro-status good">On target</span></div>
+            <div class="metric-value"><strong id="clockCoverage">—</strong><small>minimum 95%</small></div>
+            <div class="coverage-track" aria-hidden="true"><span id="coverageFill"></span></div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-heading"><span>Journal integrity</span><span class="metric-icon">◇</span></div>
+            <div class="metric-value"><strong id="journalIntegrity">—</strong><small>append-only evidence</small></div>
+            <p class="metric-foot" id="barsCaptured">— closed bars saved</p>
+          </article>
+          <article class="metric-card">
+            <div class="metric-heading"><span>Scheduled observer</span><span class="metric-icon">◴</span></div>
+            <div class="metric-value"><strong id="taskState">—</strong><small id="taskResult">awaiting task status</small></div>
+            <p class="metric-foot" id="nextRun">Next run —</p>
+          </article>
+          <article class="metric-card accent-card">
+            <div class="metric-heading"><span>Execution mode</span><span class="metric-icon">◎</span></div>
+            <div class="metric-value"><strong id="runtimeMode">—</strong><small>order adapter absent</small></div>
+            <p class="metric-foot"><span class="safe-dot"></span>No broker order submitted</p>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel coverage-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="card-kicker">06:00 UTC clock</span>
+                <h3>Observation coverage</h3>
+              </div>
+              <span class="panel-note" id="lastClock">Last close —</span>
+            </div>
+            <div class="clock-score">
+              <div><strong id="freshClocks">—</strong><span>Fresh</span></div>
+              <div><strong id="staleClocks">—</strong><span>Stale</span></div>
+              <div><strong id="missingClocks">—</strong><span>Missing</span></div>
+              <div><strong id="excludedClocks">—</strong><span>Excluded</span></div>
+            </div>
+            <div class="clock-ribbon" id="clockRibbon" aria-label="Clock health distribution"></div>
+            <div class="detail-row">
+              <span>Eligible clocks <strong id="expectedClocks">—</strong></span>
+              <span>Last capture lag <strong id="captureLag">—</strong></span>
+            </div>
+          </article>
+
+          <article class="panel evidence-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="card-kicker">Blinded sample progress</span>
+                <h3>Evidence flow</h3>
+              </div>
+              <span class="panel-note">Counts only</span>
+            </div>
+            <div class="evidence-list">
+              <div><span class="evidence-icon mint">↗</span><p>Signals observed<small>Post-geometry and ATR gate</small></p><strong id="signalsObserved">—</strong></div>
+              <div><span class="evidence-icon amber">⊘</span><p>Risk vetoes<small>Entries refused by safety rules</small></p><strong id="riskVetoes">—</strong></div>
+              <div><span class="evidence-icon blue">≡</span><p>Paper intents<small>Simulated orders only</small></p><strong id="paperIntents">—</strong></div>
+              <div><span class="evidence-icon violet">✓</span><p>Closed paper rows<small>Payloads remain sealed</small></p><strong id="closedRows">—</strong></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="content-grid lower-grid">
+          <article class="panel safeguards-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="card-kicker">Execution boundary</span>
+                <h3>Safeguards</h3>
+              </div>
+              <span class="status-pill status-ok compact"><i></i>Read only</span>
+            </div>
+            <dl class="safeguard-list">
+              <div><dt>Bound account</dt><dd id="accountKey">—</dd></div>
+              <div><dt>Kill switch</dt><dd id="killSwitch">—</dd></div>
+              <div><dt>Reconciliation</dt><dd id="reconciliation">—</dd></div>
+              <div><dt>Broker orders</dt><dd class="positive">Disabled by design</dd></div>
+            </dl>
+          </article>
+
+          <article class="panel services-panel">
+            <div class="panel-heading">
+              <div>
+                <span class="card-kicker">Local services</span>
+                <h3>Feed & runtime</h3>
+              </div>
+            </div>
+            <div class="service-list">
+              <div><span class="service-led" id="mt5Led"></span><p>MT5 observer<small id="mt5Detail">Verified by last successful task run</small></p><strong id="mt5Status">—</strong></div>
+              <div><span class="service-led" id="newsLed"></span><p>Economic calendar<small id="newsDetail">Exporter path not configured</small></p><strong id="newsStatus">—</strong></div>
+              <div><span class="service-led" id="apiLed"></span><p>Dashboard bridge<small>SQLite opened with mode=ro</small></p><strong>Local</strong></div>
+            </div>
+          </article>
+        </section>
+      </main>
+
+      <footer>
+        <p><span class="footer-dot"></span><strong>Forward v2</strong> · health allowlist · auto-refresh every <span id="refreshInterval">15</span>s</p>
+        <p id="sourceNote">No performance queries exist in this application.</p>
+      </footer>
+    </div>
+
+    <div class="error-toast" id="errorToast" role="status" aria-live="polite"></div>
+  </body>
+</html>
