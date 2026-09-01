@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 CLOCK_AMENDMENT_ID = "xauusd-regime-session-open-h1-forward-v2-clock-calendar-v1"
 CLOCK_ELIGIBILITY_RULE_ID = "h1_exact_or_immediately_prior_close_v1"
 DEFAULT_ACCOUNT_KEY = "Exness-MT5Trial5:277817628"
-DEFAULT_TASK_NAME = "TradingBot Forward Observer v2"
+DEFAULT_TASK_NAME = "TradingBot Forward Observer v3"
 FORBIDDEN_RESPONSE_KEYS = {
     "balance", "equity", "profit", "loss", "pnl", "return", "returns",
     "expectancy", "sharpe", "drawdown", "payoff", "win_rate", "profit_factor",
@@ -167,6 +167,9 @@ class HealthReader:
                 "intended_orders": event_counts.get("intended_order", 0),
                 "closed_candidate_trades": scalar(
                     "SELECT COUNT(*) FROM paper_trades"
+                ),
+                "provider_bar_revisions": event_counts.get(
+                    "provider_bar_revision", 0
                 ),
             }
             return str(binding_row["account_key"]), status
