@@ -15,10 +15,11 @@ import platform
 import re
 import sqlite3
 import subprocess
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from dashboard_server import (
     DashboardConfig,
@@ -70,7 +71,8 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def readonly_connection(path: Path) -> sqlite3.Connection:
+@contextmanager
+def readonly_connection(path: Path) -> Iterator[sqlite3.Connection]:
     if not path.is_file():
         raise WatchdogError(f"SQLite journal is missing: {path}")
     connection = sqlite3.connect(
@@ -79,7 +81,10 @@ def readonly_connection(path: Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
     connection.execute("PRAGMA busy_timeout=30000")
-    return connection
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _database_binding(path: Path) -> dict[str, Any]:

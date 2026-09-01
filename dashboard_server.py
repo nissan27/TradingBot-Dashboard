@@ -8,12 +8,13 @@ import os
 import platform
 import sqlite3
 import subprocess
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 
@@ -39,7 +40,8 @@ def utc_age_seconds(value: str | None) -> float | None:
     return max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
 
 
-def readonly_connection(path: Path) -> sqlite3.Connection:
+@contextmanager
+def readonly_connection(path: Path) -> Iterator[sqlite3.Connection]:
     if not path.is_file():
         raise FileNotFoundError(path)
     connection = sqlite3.connect(
@@ -47,7 +49,10 @@ def readonly_connection(path: Path) -> sqlite3.Connection:
     )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
-    return connection
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 @dataclass(frozen=True)
