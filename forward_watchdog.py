@@ -87,7 +87,7 @@ def readonly_connection(path: Path) -> Iterator[sqlite3.Connection]:
         connection.close()
 
 
-def _database_binding(path: Path) -> dict[str, Any]:
+def database_binding(path: Path) -> dict[str, Any]:
     """Read only deployment identity fields, never performance payloads."""
     with readonly_connection(path) as connection:
         row = connection.execute(
@@ -112,7 +112,7 @@ def verify_manifest_binding(
 ) -> dict[str, Any]:
     if not manifest_path.is_file():
         raise WatchdogError(f"frozen manifest is missing: {manifest_path}")
-    binding = _database_binding(journal_path)
+    binding = database_binding(journal_path)
     manifest_bytes_hash = sha256_file(manifest_path)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -247,7 +247,7 @@ def create_verified_backup(
     if backup_path.exists() or receipt_path.exists() or partial_path.exists():
         raise WatchdogError("backup timestamp already exists; refusing overwrite")
 
-    source_binding = _database_binding(source_path)
+    source_binding = database_binding(source_path)
     try:
         with readonly_connection(source_path) as source:
             destination = sqlite3.connect(str(partial_path), timeout=30.0)
@@ -261,7 +261,7 @@ def create_verified_backup(
         integrity = sqlite_integrity(partial_path)
         if integrity != "ok":
             raise WatchdogError(f"new backup integrity is {integrity!r}")
-        if _database_binding(partial_path) != source_binding:
+        if database_binding(partial_path) != source_binding:
             raise WatchdogError("new backup observer binding differs from source")
         os.replace(partial_path, backup_path)
         database_hash = sha256_file(backup_path)

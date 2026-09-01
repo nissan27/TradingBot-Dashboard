@@ -83,6 +83,40 @@ v1/v2 journal, and never restore a backup over the active v3 journal while the
 observer is running. Recovery must first be rehearsed against a disposable
 copy.
 
+## Disposable recovery rehearsal
+
+Run this only after the watchdog is healthy and has created at least one
+verified backup/receipt pair. The rehearsal validates the latest receipt,
+copies that verified snapshot into a new timestamped drill directory, verifies
+its SHA-256, SQLite integrity, frozen observer binding, foreign keys and all 12
+append-only triggers, then writes a blinded recovery receipt. The active v3
+journal is used only for a same-file safety check and is never opened or used
+as the restore target.
+
+```powershell
+cd C:\mtbot-dashboard
+
+$receipt = Get-ChildItem `
+  "C:\mtbot-backups\forward-v3\*.receipt.json" |
+  Sort-Object LastWriteTimeUtc -Descending |
+  Select-Object -First 1
+
+if (-not $receipt) {
+  throw "No verified forward-v3 backup receipt was found."
+}
+
+C:\mtbot2\.venv\Scripts\python.exe .\rehearse_forward_recovery.py `
+  --receipt $receipt.FullName `
+  --active-journal "C:\mtbot2\data\forward\xauusd-regime-session-open-h1-forward-v3.sqlite3" `
+  --drill-root "C:\mtbot-recovery-drills" `
+  --trial-id "xauusd-regime-session-open-h1-forward-v3" `
+  --account-key "Exness-MT5Trial5:277817628"
+```
+
+The successful result starts with `Forward recovery rehearsal: PASS` and keeps
+the restored database plus `RECOVERY-DRILL-RECEIPT.json` for inspection. It
+does not start an observer, inspect P&L or submit a broker order.
+
 ## Tests
 
 ```powershell

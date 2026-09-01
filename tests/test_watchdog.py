@@ -7,9 +7,12 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from dashboard_server import assert_blinded_payload
 from forward_watchdog import (
     BackupResult,
+    WatchdogError,
     apply_retention,
     create_verified_backup,
     ensure_recent_backup,
@@ -19,6 +22,7 @@ from forward_watchdog import (
     validate_backup_receipt,
     verify_manifest_binding,
 )
+from rehearse_forward_recovery import run_recovery_drill
 
 
 UTC = timezone.utc
@@ -87,6 +91,18 @@ def _forward_database(path: Path, manifest_path: Path) -> sqlite3.Connection:
         );
         """
     )
+    for table in (
+        "observer_binding", "captured_bars", "clock_expectations",
+        "clock_captures", "observer_events", "paper_trades",
+    ):
+        for action in ("UPDATE", "DELETE"):
+            connection.execute(
+                f"""CREATE TRIGGER no_{action.lower()}_{table}
+                BEFORE {action} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, 'forward journal is append-only');
+                END"""
+            )
     binding = {
         "schema_version": 1,
         "hypothesis_id": TRIAL_ID,
@@ -189,6 +205,78 @@ def test_online_backup_captures_active_wal_without_mutating_source(tmp_path: Pat
             trial_id=TRIAL_ID, account_key=ACCOUNT_KEY,
         )
         assert deployment["minimum_clock_coverage"] == 0.95
+    finally:
+        writer.close()
+
+
+def test_recovery_rehearsal_uses_disposable_verified_copy_only(tmp_path: Path):
+    source, _manifest_path, writer = _fixture(tmp_path)
+    try:
+        backup = create_verified_backup(
+            source_path=source,
+            backup_dir=tmp_path / "backups",
+            trial_id=TRIAL_ID,
+            now_utc=datetime(2026, 9, 1, 7, 15, tzinfo=UTC),
+        )
+        active_before = _file_digest(source)
+        result = run_recovery_drill(
+            receipt_path=backup.receipt_path,
+            active_journal=source,
+            drill_root=tmp_path / "recovery-drills",
+            trial_id=TRIAL_ID,
+            account_key=ACCOUNT_KEY,
+            now_utc=datetime(2026, 9, 1, 8, 0, tzinfo=UTC),
+        )
+
+        restored = Path(result["restored_copy"]["path"])
+        drill_receipt = Path(result["drill_receipt_path"])
+        assert _file_digest(source) == active_before
+        assert sha256_file(restored) == backup.database_sha256
+        assert sqlite_integrity(restored) == "ok"
+        assert result["active_journal"]["opened_by_drill"] is False
+        assert result["active_journal"]["used_as_restore_target"] is False
+        assert result["observer_started_from_copy"] is False
+        assert result["performance_blinded"] is True
+        assert result["broker_order_adapter_present"] is False
+        assert result["verdict"] == "RECOVERY_REHEARSAL_PASS"
+        assert result["restored_copy"]["append_only_triggers"] == 12
+        assert result["restored_copy"]["foreign_key_violations"] == 0
+
+        serialized = drill_receipt.read_text(encoding="utf-8")
+        assert "secret_performance" not in serialized
+        assert "999999" not in serialized
+        assert "sealed-trade" not in serialized
+        assert_blinded_payload(json.loads(serialized))
+    finally:
+        writer.close()
+
+
+def test_recovery_rehearsal_refuses_active_journal_before_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    source, _manifest_path, writer = _fixture(tmp_path)
+    try:
+        fake_receipt = source.with_name(source.name + ".receipt.json")
+        fake_receipt.write_text("{}", encoding="utf-8")
+
+        def forbidden_validation(*_args, **_kwargs):
+            raise AssertionError("active journal reached backup validation")
+
+        monkeypatch.setattr(
+            "rehearse_forward_recovery.validate_backup_receipt",
+            forbidden_validation,
+        )
+        with pytest.raises(
+            WatchdogError, match="backup path resolves to the active journal"
+        ):
+            run_recovery_drill(
+                receipt_path=fake_receipt,
+                active_journal=source,
+                drill_root=tmp_path / "recovery-drills",
+                trial_id=TRIAL_ID,
+                account_key=ACCOUNT_KEY,
+                now_utc=datetime(2026, 9, 1, 8, 0, tzinfo=UTC),
+            )
     finally:
         writer.close()
 
