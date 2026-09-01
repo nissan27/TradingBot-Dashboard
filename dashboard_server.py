@@ -22,6 +22,7 @@ CLOCK_AMENDMENT_ID = "xauusd-regime-session-open-h1-forward-v2-clock-calendar-v1
 CLOCK_ELIGIBILITY_RULE_ID = "h1_exact_or_immediately_prior_close_v1"
 DEFAULT_ACCOUNT_KEY = "Exness-MT5Trial5:277817628"
 DEFAULT_TASK_NAME = "TradingBot Forward Observer v3"
+DEFAULT_TRIAL_ID = "xauusd-regime-session-open-h1-forward-v3"
 FORBIDDEN_RESPONSE_KEYS = {
     "balance", "equity", "profit", "loss", "pnl", "return", "returns",
     "expectancy", "sharpe", "drawdown", "payoff", "win_rate", "profit_factor",
@@ -60,10 +61,13 @@ class DashboardConfig:
     forward_db: Path
     execution_db: Path
     static_dir: Path
+    trial_id: str = DEFAULT_TRIAL_ID
     account_key: str = DEFAULT_ACCOUNT_KEY
     task_name: str = DEFAULT_TASK_NAME
     news_file: Path | None = None
     news_freshness_seconds: int = 600
+    alert_state_file: Path | None = None
+    alert_freshness_seconds: int = 900
     refresh_seconds: int = 15
 
 
@@ -72,6 +76,67 @@ class HealthReader:
 
     def __init__(self, config: DashboardConfig):
         self.config = config
+
+    def _alert_health(self) -> dict[str, Any]:
+        path = self.config.alert_state_file
+        if path is None:
+            return {"configured": False, "status": "not_configured"}
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            assert_blinded_payload(state)
+            generated = datetime.fromisoformat(
+                str(state["generated_utc"]).replace("Z", "+00:00")
+            )
+            if generated.tzinfo is None or generated.utcoffset() is None:
+                raise ValueError("alert timestamp lacks timezone")
+            age = max(
+                0.0,
+                (datetime.now(timezone.utc) - generated.astimezone(timezone.utc))
+                .total_seconds(),
+            )
+            contract_ok = bool(
+                state.get("schema_version") == 1
+                and state.get("kind") == "forward_operational_alert_state"
+                and state.get("trial_id") == self.config.trial_id
+                and state.get("runtime_mode") == "paper_read_only"
+                and state.get("performance_blinded") is True
+                and state.get("broker_order_adapter_present") is False
+            )
+            raw_status = str(state.get("overall_status", "unavailable"))
+            if not contract_ok:
+                status = "unavailable"
+            elif age > self.config.alert_freshness_seconds:
+                status = "stale"
+            elif raw_status == "HEALTHY":
+                status = "healthy"
+            elif raw_status == "INCIDENT_ACTIVE":
+                status = "incident"
+            else:
+                status = "attention"
+            active = state.get("active_incident")
+            conditions = active.get("conditions", []) if isinstance(active, dict) else []
+            return {
+                "configured": True,
+                "status": status,
+                "age_seconds": age,
+                "incident_id": (
+                    str(active.get("incident_id"))[:12]
+                    if isinstance(active, dict) and active.get("incident_id")
+                    else None
+                ),
+                "opened_utc": (
+                    active.get("opened_utc") if isinstance(active, dict) else None
+                ),
+                "condition_codes": [
+                    str(item.get("code")) for item in conditions
+                    if isinstance(item, dict) and item.get("code")
+                ],
+                "pending_notifications": int(
+                    state.get("pending_notifications", 0)
+                ),
+            }
+        except Exception:
+            return {"configured": True, "status": "unavailable"}
 
     def _forward_health(self) -> tuple[str, dict[str, Any]]:
         with readonly_connection(self.config.forward_db) as connection:
@@ -303,6 +368,7 @@ class HealthReader:
         safety = self._safety_health(account_key)
         scheduler = self._scheduler_health()
         news = self._news_health()
+        alerts = self._alert_health()
         attention = bool(
             journal["integrity"] != "ok"
             or journal["missing_clocks"]
@@ -321,6 +387,10 @@ class HealthReader:
                 news.get("configured")
                 and news.get("status") != "fresh"
             )
+            or (
+                alerts.get("configured")
+                and alerts.get("status") != "healthy"
+            )
         )
         payload = {
             "schema_version": 1,
@@ -332,6 +402,7 @@ class HealthReader:
             "safety": safety,
             "scheduler": scheduler,
             "news": news,
+            "alerts": alerts,
             "refresh_seconds": self.config.refresh_seconds,
             "performance_blinded": True,
             "broker_order_adapter_present": False,
@@ -412,10 +483,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--forward-db", type=Path, required=True)
     parser.add_argument("--execution-db", type=Path, required=True)
+    parser.add_argument("--trial-id", default=DEFAULT_TRIAL_ID)
     parser.add_argument("--account-key", default=DEFAULT_ACCOUNT_KEY)
     parser.add_argument("--task-name", default=DEFAULT_TASK_NAME)
     parser.add_argument("--news-file", type=Path)
     parser.add_argument("--news-freshness-seconds", type=int, default=600)
+    parser.add_argument("--alert-state-file", type=Path)
+    parser.add_argument("--alert-freshness-seconds", type=int, default=900)
     parser.add_argument("--refresh-seconds", type=int, default=15)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -431,10 +505,13 @@ def main() -> int:
         forward_db=args.forward_db,
         execution_db=args.execution_db,
         static_dir=static_dir,
+        trial_id=args.trial_id,
         account_key=args.account_key,
         task_name=args.task_name,
         news_file=args.news_file,
         news_freshness_seconds=max(1, args.news_freshness_seconds),
+        alert_state_file=args.alert_state_file,
+        alert_freshness_seconds=max(60, args.alert_freshness_seconds),
         refresh_seconds=max(5, args.refresh_seconds),
     )
     DashboardHandler.reader = HealthReader(config)

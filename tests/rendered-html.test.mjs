@@ -39,6 +39,8 @@ test("ships the blinded, localhost dashboard assets", async () => {
   assert.match(dashboard, /Performance blinded/);
   assert.match(dashboard, /No performance queries exist/);
   assert.match(dashboard, /Localhost only/);
+  assert.match(dashboard, /Operational alerts/);
+  assert.match(dashboard, /alertBanner/);
   assert.match(script, /fetch\("\/api\/health"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("app/_sites-preview", templateRoot)));

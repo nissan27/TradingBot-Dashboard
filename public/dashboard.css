@@ -57,6 +57,23 @@ button { font: inherit; }
 .refresh-button.loading span { display: inline-block; animation: spin 800ms linear infinite; }
 
 main { padding-top: 44px; }
+.alert-banner {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(229, 127, 117, 0.28);
+  border-radius: 12px;
+  background: rgba(65, 28, 25, 0.78);
+  color: #f4c0ba;
+}
+.alert-banner[hidden] { display: none; }
+.alert-symbol { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; background: rgba(229,127,117,0.13); color: var(--danger); font-weight: 800; }
+.alert-banner strong { display: block; font-size: 12px; }
+.alert-banner p { margin: 3px 0 0; color: #cda09b; font-size: 10px; text-transform: lowercase; }
+.alert-banner > span { color: #cda09b; font: 500 9px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(340px, 0.72fr); gap: 26px; align-items: end; }
 .hero-copy { padding: 8px 2px 6px; }
 .status-line { gap: 13px; }

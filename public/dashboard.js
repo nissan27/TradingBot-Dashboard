@@ -16,6 +16,7 @@ const previewPayload = {
   safety: { kill_switch_engaged: false, reconciliation_ok: true, reconciliation_age_seconds: 108 },
   scheduler: { available: true, state: "Ready", last_result: 0, last_run_age_seconds: 128, missed_runs: 0, next_run_utc: "2026-08-18T11:03:01Z" },
   news: { configured: true, status: "fresh", age_seconds: 94 },
+  alerts: { configured: true, status: "healthy", age_seconds: 102, condition_codes: [], pending_notifications: 0 },
   refresh_seconds: 15,
   performance_blinded: true,
   broker_order_adapter_present: false
@@ -68,6 +69,7 @@ function render(payload) {
   const scheduler = payload.scheduler || {};
   const safety = payload.safety || {};
   const news = payload.news || {};
+  const alerts = payload.alerts || {};
   const statusLabel = payload.overall_status === "healthy" ? "Healthy" : payload.overall_status === "attention" ? "Attention" : "Unavailable";
 
   setStatus(byId("overallStatus"), payload.overall_status, statusLabel);
@@ -104,6 +106,30 @@ function render(payload) {
   setLed("newsLed", news.status === "fresh" ? "good" : news.configured ? "warn" : "");
   text("newsStatus", news.status || "Not configured");
   text("newsDetail", news.configured ? `${seconds(news.age_seconds)} since MT5 calendar export` : "Add the Common Files export path to the dashboard command");
+  const alertHealthy = alerts.configured && alerts.status === "healthy";
+  const alertBanner = byId("alertBanner");
+  alertBanner.hidden = !alerts.configured || alertHealthy;
+  if (!alertBanner.hidden) {
+    const incident = alerts.status === "incident";
+    text("alertTitle", incident ? "Operational incident active" : "Alert pipeline needs attention");
+    text(
+      "alertDetail",
+      alerts.condition_codes?.length
+        ? alerts.condition_codes.join(", ").replaceAll("_", " ")
+        : `Alert status: ${alerts.status || "unavailable"}`
+    );
+    text("alertUpdated", alerts.incident_id ? `Incident ${alerts.incident_id}` : seconds(alerts.age_seconds));
+  }
+  setLed("alertLed", alertHealthy ? "good" : alerts.configured ? "bad" : "warn");
+  text("alertServiceStatus", alertHealthy ? "Armed" : alerts.configured ? "Check" : "Not configured");
+  text(
+    "alertServiceDetail",
+    alertHealthy
+      ? `${seconds(alerts.age_seconds)} since the last alert evaluation`
+      : alerts.pending_notifications
+        ? `${number(alerts.pending_notifications)} notification pending`
+        : "Blinded incident and recovery notifications"
+  );
   setLed("apiLed", "good");
 }
 

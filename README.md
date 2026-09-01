@@ -83,6 +83,65 @@ v1/v2 journal, and never restore a backup over the active v3 journal while the
 observer is running. Recovery must first be rehearsed against a disposable
 copy.
 
+## Blinded incident and recovery alerts
+
+The alert pipeline is deliberately separate from both the observer and the
+watchdog. Every five minutes it reads only `watchdog-latest.json` and opens an
+incident when any of these conditions occur:
+
+- the watchdog report is missing, invalid or more than 30 minutes old;
+- the watchdog reports an unhealthy operational check; or
+- the newest verified backup is missing, invalid or more than 26 hours old.
+
+One contiguous unhealthy period produces one Windows Application event-log
+alert. Repeated checks update the append-only evidence but do not resend the
+alert. The first clean evaluation records and delivers one recovery event.
+Incident transitions and delivery receipts are kept in a separate append-only
+SQLite journal. `alert-state.json` supplies a health-only warning banner to the
+localhost dashboard. No component opens the forward journal, imports MT5,
+reads performance or contains an order adapter.
+
+After pulling the dashboard repository, initialize the alert journal and state
+with one manual healthy evaluation:
+
+```powershell
+cd C:\mtbot-dashboard
+
+C:\mtbot2\.venv\Scripts\python.exe .\forward_alerts.py `
+  --trial-id "xauusd-regime-session-open-h1-forward-v3" `
+  --watchdog-status "C:\mtbot-backups\forward-v3\watchdog-latest.json" `
+  --alert-journal "C:\mtbot-backups\forward-v3\alerts\alert-journal.sqlite3" `
+  --alert-state "C:\mtbot-backups\forward-v3\alerts\alert-state.json" `
+  --maximum-watchdog-age-seconds 1800 `
+  --maximum-backup-age-hours 26 `
+  --delivery-sink windows-event-log
+```
+
+The expected result is `Forward alerts: HEALTHY`. Then install the independent
+five-minute Scheduled Task:
+
+```powershell
+.\install_forward_alerts.ps1
+
+Get-ScheduledTaskInfo -TaskName "TradingBot Forward Alerts v3" |
+  Format-List LastRunTime, LastTaskResult, NextRunTime, NumberOfMissedRuns
+```
+
+The installer first writes a harmless commissioning event with ID `900` to
+prove Windows Event Log access. Operational incidents use ID `901`; recoveries
+use ID `902`. Inspect the most recent pipeline events with:
+
+```powershell
+Get-WinEvent -FilterHashtable @{
+  LogName = "Application"
+  ProviderName = "TradingBot Forward Alerts"
+} -MaxEvents 10 |
+  Select-Object TimeCreated, Id, LevelDisplayName, Message
+```
+
+Restart the localhost dashboard after installation so `start_dashboard.ps1`
+loads the new alert-state path and can display the incident banner.
+
 ## Disposable recovery rehearsal
 
 Run this only after the watchdog is healthy and has created at least one

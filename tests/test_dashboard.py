@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -205,3 +207,40 @@ def test_wrong_account_binding_fails_closed(reader: HealthReader) -> None:
     )
     with pytest.raises(RuntimeError, match="account key"):
         wrong.read()
+
+
+def test_active_blinded_alert_raises_dashboard_attention(
+    reader: HealthReader, tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "alert-state.json"
+    state = {
+        "schema_version": 1,
+        "kind": "forward_operational_alert_state",
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "trial_id": "xauusd-regime-session-open-h1-forward-v3",
+        "overall_status": "INCIDENT_ACTIVE",
+        "active_incident": {
+            "incident_id": "a" * 64,
+            "opened_utc": "2026-09-01T08:00:00Z",
+            "conditions": [{
+                "code": "WATCHDOG_STATUS_STALE",
+                "detail": "status is stale",
+            }],
+        },
+        "pending_notifications": 0,
+        "runtime_mode": "paper_read_only",
+        "performance_blinded": True,
+        "broker_order_adapter_present": False,
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    configured = HealthReader(replace(
+        reader.config, alert_state_file=state_path,
+    ))
+    payload = configured.read()
+    assert payload["overall_status"] == "attention"
+    assert payload["alerts"]["status"] == "incident"
+    assert payload["alerts"]["condition_codes"] == [
+        "WATCHDOG_STATUS_STALE"
+    ]
+    assert "detail" not in payload["alerts"]
+    assert_blinded_payload(payload)

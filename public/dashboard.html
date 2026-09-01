@@ -26,6 +26,15 @@
         </div>
       </header>
 
+      <section class="alert-banner" id="alertBanner" role="alert" hidden>
+        <div class="alert-symbol" aria-hidden="true">!</div>
+        <div>
+          <strong id="alertTitle">Operational incident active</strong>
+          <p id="alertDetail">The blinded alert pipeline requires attention.</p>
+        </div>
+        <span id="alertUpdated">—</span>
+      </section>
+
       <main>
         <section class="hero-grid" aria-labelledby="overviewHeading">
           <div class="hero-copy">
@@ -140,6 +149,7 @@
             <div class="service-list">
               <div><span class="service-led" id="mt5Led"></span><p>MT5 observer<small id="mt5Detail">Verified by last successful task run</small></p><strong id="mt5Status">—</strong></div>
               <div><span class="service-led" id="newsLed"></span><p>Economic calendar<small id="newsDetail">Exporter path not configured</small></p><strong id="newsStatus">—</strong></div>
+              <div><span class="service-led" id="alertLed"></span><p>Operational alerts<small id="alertServiceDetail">Blinded incident and recovery notifications</small></p><strong id="alertServiceStatus">—</strong></div>
               <div><span class="service-led" id="apiLed"></span><p>Dashboard bridge<small>SQLite opened with mode=ro</small></p><strong>Local</strong></div>
             </div>
           </article>
