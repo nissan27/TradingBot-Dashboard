@@ -3,7 +3,8 @@
 The pipeline consumes only ``watchdog-latest.json``. It never opens the
 forward or execution journals, imports MT5, evaluates performance, or contains
 a broker order adapter. Incident transitions are recorded in a separate
-append-only SQLite journal and delivered to the Windows Application event log.
+append-only SQLite journal and can be delivered independently to the Windows
+Application event log and an optional Telegram bot.
 """
 from __future__ import annotations
 
@@ -454,9 +455,31 @@ def _write_state(path: Path, state: Mapping[str, Any]) -> None:
 def run_alert_cycle(
     *, journal: AlertJournal, state_path: Path,
     evaluation: AlertEvaluation, trial_id: str, now_utc: datetime,
-    sink: str, notifier: Notifier,
+    notifiers: Mapping[str, Notifier] | None = None,
+    sink: str | None = None, notifier: Notifier | None = None,
 ) -> dict[str, Any]:
+    """Record one transition and attempt each sink independently.
+
+    ``sink``/``notifier`` remain accepted for callers using the original
+    single-sink interface. New deployments should pass ``notifiers`` so a
+    remote delivery failure never causes a duplicate local notification.
+    """
     now_utc = now_utc.astimezone(UTC)
+    if notifiers is None:
+        if sink is None or notifier is None:
+            raise AlertError("at least one alert notifier is required")
+        notifiers = {sink: notifier}
+    elif sink is not None or notifier is not None:
+        raise AlertError("use either notifiers or sink/notifier, not both")
+    if not notifiers:
+        raise AlertError("at least one alert notifier is required")
+    normalized_notifiers = {
+        str(name): callback for name, callback in notifiers.items()
+    }
+    if any(not name or not callable(callback)
+           for name, callback in normalized_notifiers.items()):
+        raise AlertError("alert notifier mapping is invalid")
+
     active = journal.active_incident()
     if evaluation.conditions and active is None:
         opened = utc_text(now_utc)
@@ -488,16 +511,32 @@ def run_alert_cycle(
             opened_utc=str(active["occurred_utc"]),
         ))
 
-    delivery_errors: list[str] = []
-    for event in journal.pending_notifications(sink):
-        try:
-            notifier(event)
-            journal.record_delivery(event, sink=sink, now_utc=now_utc)
-        except Exception as exc:
-            delivery_errors.append(type(exc).__name__)
+    delivery_errors: list[dict[str, str]] = []
+    for sink_name, callback in normalized_notifiers.items():
+        for event in journal.pending_notifications(sink_name):
+            try:
+                callback(event)
+                journal.record_delivery(
+                    event, sink=sink_name, now_utc=now_utc,
+                )
+            except Exception as exc:
+                # Error types are operational evidence. Exception text is
+                # intentionally excluded because a third-party client could
+                # include credential-bearing request details in it.
+                delivery_errors.append({
+                    "sink": sink_name,
+                    "error_type": type(exc).__name__,
+                })
+                # Preserve transition order for this destination. A pending
+                # INCIDENT_OPENED must never be overtaken by its recovery.
+                break
 
     active = journal.active_incident()
-    pending = len(journal.pending_notifications(sink))
+    pending_by_sink = {
+        sink_name: len(journal.pending_notifications(sink_name))
+        for sink_name in normalized_notifiers
+    }
+    pending = sum(pending_by_sink.values())
     if active is not None:
         status = "INCIDENT_ACTIVE"
     elif delivery_errors or pending:
@@ -517,6 +556,7 @@ def run_alert_cycle(
         },
         "last_transition": journal.latest_transition(),
         "pending_notifications": pending,
+        "pending_by_sink": pending_by_sink,
         "delivery_errors": delivery_errors,
         "watchdog": {
             "generated_utc": evaluation.watchdog_generated_utc,
@@ -536,17 +576,22 @@ def run_alert_cycle(
     return state
 
 
-def windows_event_log_notifier(event: Mapping[str, Any]) -> None:
-    if platform.system() != "Windows":
-        raise AlertError("Windows Event Log delivery is unavailable")
+def _notification_message(event: Mapping[str, Any]) -> str:
     opened = event["event_type"] == "INCIDENT_OPENED"
     codes = ",".join(item["code"] for item in event.get("conditions", []))
-    message = (
+    return (
         f"TradingBot {event['trial_id']} "
         f"{'incident opened' if opened else 'recovered'}; "
         f"incident={str(event['incident_id'])[:12]}; "
         f"conditions={codes or 'cleared'}; performance=BLINDED"
     )[:300]
+
+
+def windows_event_log_notifier(event: Mapping[str, Any]) -> None:
+    if platform.system() != "Windows":
+        raise AlertError("Windows Event Log delivery is unavailable")
+    opened = event["event_type"] == "INCIDENT_OPENED"
+    message = _notification_message(event)
     try:
         subprocess.run(
             [
@@ -558,6 +603,42 @@ def windows_event_log_notifier(event: Mapping[str, Any]) -> None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise AlertError("Windows Event Log delivery failed") from exc
+
+
+def telegram_powershell_notifier(
+    *, credential_path: Path, sender_path: Path,
+) -> Notifier:
+    """Return a notifier that delegates token decryption to Windows DPAPI.
+
+    Python receives only the encrypted credential-file path. The token and
+    chat ID are decrypted inside the short-lived PowerShell sender process and
+    are never placed in this process, its command line, or the alert journal.
+    """
+    resolved_credential = credential_path.resolve()
+    resolved_sender = sender_path.resolve()
+
+    def notify(event: Mapping[str, Any]) -> None:
+        if platform.system() != "Windows":
+            raise AlertError("Telegram delivery requires Windows PowerShell")
+        if not resolved_credential.is_file():
+            raise AlertError("Telegram credential file is unavailable")
+        if not resolved_sender.is_file():
+            raise AlertError("Telegram sender script is unavailable")
+        try:
+            subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass", "-File",
+                    str(resolved_sender),
+                    "-CredentialPath", str(resolved_credential),
+                    "-Message", _notification_message(event),
+                ],
+                check=True, capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise AlertError("Telegram delivery failed") from exc
+
+    return notify
 
 
 def console_notifier(event: Mapping[str, Any]) -> None:
@@ -578,9 +659,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--maximum-backup-age-hours", type=float, default=26.0)
     parser.add_argument(
-        "--delivery-sink", choices=("windows-event-log", "console"),
-        default="windows-event-log",
+        "--delivery-sink",
+        choices=("windows-event-log", "telegram", "console"),
+        action="append",
+        help=("delivery sink; repeat to enable independent local and remote "
+              "delivery (default: windows-event-log)"),
     )
+    parser.add_argument("--telegram-credential", type=Path)
+    parser.add_argument("--telegram-sender", type=Path)
     return parser.parse_args()
 
 
@@ -602,18 +688,35 @@ def main() -> int:
             maximum_backup_age_hours=max(1.0, args.maximum_backup_age_hours),
             input_error=input_error,
         )
-        notifier = (
-            windows_event_log_notifier
-            if args.delivery_sink == "windows-event-log"
-            else console_notifier
-        )
+        sinks = list(dict.fromkeys(
+            args.delivery_sink or ["windows-event-log"]
+        ))
+        notifiers: dict[str, Notifier] = {}
+        for sink_name in sinks:
+            if sink_name == "windows-event-log":
+                notifiers[sink_name] = windows_event_log_notifier
+            elif sink_name == "console":
+                notifiers[sink_name] = console_notifier
+            else:
+                if args.telegram_credential is None:
+                    raise AlertError(
+                        "Telegram delivery requires --telegram-credential"
+                    )
+                if args.telegram_sender is None:
+                    raise AlertError(
+                        "Telegram delivery requires --telegram-sender"
+                    )
+                notifiers[sink_name] = telegram_powershell_notifier(
+                    credential_path=args.telegram_credential,
+                    sender_path=args.telegram_sender,
+                )
         with AlertJournal(
             args.alert_journal, trial_id=args.trial_id, now_utc=now,
         ) as journal:
             state = run_alert_cycle(
                 journal=journal, state_path=args.alert_state,
                 evaluation=evaluation, trial_id=args.trial_id,
-                now_utc=now, sink=args.delivery_sink, notifier=notifier,
+                now_utc=now, notifiers=notifiers,
             )
     except Exception as exc:
         print(f"Forward alerts: PIPELINE FAILURE ({type(exc).__name__})")
@@ -630,6 +733,8 @@ def main() -> int:
         print(f"Incident:       {state['active_incident']['incident_id'][:12]}")
         print(f"Conditions:     {codes}")
     print(f"Pending alerts: {state['pending_notifications']}")
+    for sink_name, count in state["pending_by_sink"].items():
+        print(f"  {sink_name}: {count}")
     print(f"Alert journal:  {args.alert_journal.resolve()}")
     print(f"Alert state:    {args.alert_state.resolve()}")
     print("Performance:    BLINDED")

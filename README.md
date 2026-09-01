@@ -94,8 +94,11 @@ incident when any of these conditions occur:
 - the newest verified backup is missing, invalid or more than 26 hours old.
 
 One contiguous unhealthy period produces one Windows Application event-log
-alert. Repeated checks update the append-only evidence but do not resend the
-alert. The first clean evaluation records and delivers one recovery event.
+alert. An optional Telegram sink can deliver the same blinded transition
+remotely. Repeated checks update the append-only evidence but do not resend a
+successful delivery. Each sink has its own delivery receipt, so a Telegram
+outage is retried without duplicating the Windows event. The first clean
+evaluation records and delivers one recovery event to every configured sink.
 Incident transitions and delivery receipts are kept in a separate append-only
 SQLite journal. `alert-state.json` supplies a health-only warning banner to the
 localhost dashboard. No component opens the forward journal, imports MT5,
@@ -141,6 +144,66 @@ Get-WinEvent -FilterHashtable @{
 
 Restart the localhost dashboard after installation so `start_dashboard.ps1`
 loads the new alert-state path and can display the incident banner.
+
+### Optional Telegram notifications
+
+Telegram is an additional remote notification sink; it does not replace the
+Windows Application event log. Configure it only while the dashboard shows
+`HEALTHY`, no notification is pending, and no incident has ever been opened in
+this new alert journal. The setup script refuses any other state so enabling a
+new sink cannot replay old incident messages.
+
+1. Create a bot with Telegram's official
+   [BotFather](https://core.telegram.org/bots/features#botfather).
+2. Open that bot in Telegram and send `/start` once. The setup uses the
+   official `getMe` method to verify the token and `getUpdates` to discover
+   that private chat.
+3. On the VPS, run the configuration script. Paste the token only into its
+   hidden local prompt—never into source code, Git, a command argument, this
+   chat, or a screenshot.
+
+```powershell
+cd C:\mtbot-dashboard
+.\configure_telegram_alerts.ps1
+```
+
+If the bot has messages from more than one chat, the script stops rather than
+guessing. Rerun it with the intended numeric chat ID:
+
+```powershell
+.\configure_telegram_alerts.ps1 -ChatId "YOUR_CHAT_ID"
+```
+
+The token is stored outside Git at
+`C:\mtbot-backups\forward-v3\alerts\telegram-credential.xml`. Windows DPAPI
+encrypts it for the current VPS machine and Windows user, and the file ACL is
+restricted to that user plus `SYSTEM`. The setup verifies that this is the
+same account used by `TradingBot Forward Alerts v3`, sends one harmless
+commissioning message, then updates that existing Scheduled Task to contain
+both sinks. The task command contains only the encrypted credential-file path,
+never the token or chat ID.
+
+Verify the upgraded task without displaying the credential contents:
+
+```powershell
+(Get-ScheduledTask -TaskName "TradingBot Forward Alerts v3").Actions |
+  Format-List Execute, Arguments, WorkingDirectory
+
+Get-ScheduledTaskInfo -TaskName "TradingBot Forward Alerts v3" |
+  Format-List LastRunTime, LastTaskResult, NextRunTime, NumberOfMissedRuns
+
+$state = Get-Content `
+  "C:\mtbot-backups\forward-v3\alerts\alert-state.json" -Raw |
+  ConvertFrom-Json
+$state | Select-Object overall_status, pending_notifications, pending_by_sink
+```
+
+Expected healthy state: `LastTaskResult` is `0`, `overall_status` is
+`HEALTHY`, and both values in `pending_by_sink` are zero. Telegram incident and
+recovery messages contain only the frozen trial ID, a shortened incident ID,
+operational condition codes, and `performance=BLINDED`. The sender uses the
+official HTTPS [`sendMessage`](https://core.telegram.org/bots/api#sendmessage)
+method and never opens the trading journals.
 
 ## Disposable recovery rehearsal
 
